@@ -1,0 +1,237 @@
+version: "3.8"
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - app_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      #KAFKA_LISTENERS: INSIDE://0.0.0.0:9092
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:29092
+      #KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092,OUTSIDE://localhost:29092
+      
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      #KAFKA_LISTENER_NAME_INSIDE: INSIDE
+      #KAFKA_LISTENER_PORT_INSIDE: 9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    networks:
+      - app_network
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - kafka
+      - kafka-listeners
+    command: >
+      sh -c "
+        cub kafka-ready -b kafka:9092 1 20 || exit 1;
+        kafka-topics --create --topic logs --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic customers_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic geolocation_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic order_items_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic order_payments_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic order_reviews_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic orders_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic products_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic sellers_dataset --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        kafka-topics --create --topic product_category_name_translation --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092;
+        
+        sleep infinity
+      "
+    networks:
+      - app_network
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    depends_on:
+      - kafka
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    ports:
+      - "8081:8081"
+    networks:
+      - app_network
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.10.2
+    volumes:
+      #- ./logfiles.log:/var/log/logfiles.log:ro
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+
+      #- ./dataset/customers_dataset:/var/log/dataset/customers_dataset:ro
+      - ../data/raw/customers_dataset:/var/log/dataset/customers_dataset:ro
+      - ../data/raw/geolocation_dataset:/var/log/dataset/geolocation_dataset:ro
+      - ../data/raw/order_items_dataset:/var/log/dataset/order_items_dataset:ro
+      - ../data/raw/order_payments_dataset:/var/log/dataset/order_payments_dataset:ro
+      - ../data/raw/order_reviews_dataset:/var/log/dataset/order_reviews_dataset:ro
+      - ../data/raw/orders_dataset:/var/log/dataset/orders_dataset:ro
+      - ../data/raw/products_dataset:/var/log/dataset/products_dataset:ro
+      - ../data/raw/sellers_dataset:/var/log/dataset/sellers_dataset:ro
+      - ../data/raw/product_category_name_translation_dataset:/var/log/dataset/product_category_name_translation_dataset:ro
+
+    depends_on:
+      - kafka
+    #command: filebeat -e
+    command: filebeat -e --strict.perms=false
+    ports:
+      - "5044:5044"
+    networks:
+      - app_network
+
+  spark-iceberg:
+    image: tabulario/spark-iceberg
+    depends_on:
+      - kafka
+    volumes:
+      - ./warehouse:/home/iceberg/warehouse
+      - ./notebooks:/home/iceberg/notebooks/notebooks
+      - ../pipeline:/home/iceberg/notebooks/pipeline
+      - ./jars:/home/iceberg/jars
+      - ../data/new_data:/home/iceberg/output
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    ports:
+      - "8888:8888"    # Jupyter notebook Spark
+      - "8082:8080"    # Spark UI through port remap
+      - "10000:10000"  # Spark Thrift server (optional)
+    networks:
+      - app_network
+
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: iceberg
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: iceberg
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata-mod12:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iceberg -d iceberg -h 127.0.0.1"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+    networks:
+      - app_network
+
+  minio:
+    image: minio/minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+      - MINIO_DOMAIN=minio
+      - MINIO_DEFAULT_BUCKETS=warehouse
+    #command: server /data
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    # healthcheck:
+    #   test: ["CMD", "mc", "alias", "set", "myminio", "http://localhost:9000", "admin", "password", "&&", "mc", "ls", "myminio/"]
+    #   interval: 10s
+    #   retries: 5
+    #   start_period: 30s
+    #   timeout: 5s
+
+    networks:
+      - app_network
+
+  rest:
+    image: tabulario/iceberg-rest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      #minio:
+      #  condition: service_healthy
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./warehouse:/warehouse
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg
+      CATALOG_JDBC_USER: iceberg
+      CATALOG_JDBC_PASSWORD: password
+    networks:
+      - app_network
+
+  mc:
+    depends_on:
+      - minio
+    image: minio/mc
+    container_name: mc
+    networks:
+      - app_network
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    entrypoint: >
+      /bin/sh -c "
+      
+      until (/usr/bin/mc alias set minio http://minio:9000 admin password) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc ls minio/warehouse || /usr/bin/mc mb minio/warehouse;
+
+      /usr/bin/mc rm -r --force minio/warehouse;
+      /usr/bin/mc mb minio/warehouse;
+      /usr/bin/mc policy set public minio/warehouse;
+      tail -f /dev/null
+      "
+
+  kafka-listeners:
+    image: confluentinc/cp-kafka:7.6.1
+    depends_on:
+      - kafka
+    volumes:
+      - ./kafka-listener.sh:/usr/local/bin/kafka-listener.sh
+    command: /bin/bash /usr/local/bin/kafka-listener.sh
+    restart: always
+    networks:
+      - app_network
+
+
+volumes:
+  minio-data:
+  pgdata-mod12:
+
+networks:
+  app_network:
+    driver: bridge
+
+## kafka
+## kafka-topics --create --topic logs --partitions 1 --replication-factor 1 --if-not-exists --bootstrap-server kafka:9092
+## escuhcar
+## kafka-console-consumer --bootstrap-server localhost:29092 --topic logs --from-beginning
+## kafka-console-producer --bootstrap-server localhost:29092 --topic logs
+##

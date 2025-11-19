@@ -1,0 +1,4 @@
+pipeline/.ipynb_checkpoints
+setup_enviroment/notebooks/.ipynb_checkpoints
+setup_enviroment/warehouse/*
+data/raw/000/

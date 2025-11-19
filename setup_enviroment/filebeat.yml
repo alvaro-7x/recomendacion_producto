@@ -1,0 +1,80 @@
+  filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      #- /var/log/dataset/customers_dataset/*/*.csv
+      - /var/log/dataset/customers_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: customers_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      #- /var/log/dataset/geolocation_dataset/*/*.csv
+      - /var/log/dataset/geolocation_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: geolocation_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/order_items_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: order_items_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/order_payments_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: order_payments_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/order_reviews_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: order_reviews_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/orders_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: orders_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/products_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: products_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/sellers_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: sellers_dataset
+
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/dataset/product_category_name_translation_dataset/**/*.csv
+    encoding: utf-8
+    fields:
+      topic: product_category_name_translation
+
+
+  output.kafka:
+    hosts: ["kafka:9092"]
+    #topic: "logs"
+    topic: "%{[fields][topic]}"  # El valor del campo 'topic' se utiliza para determinar a qué tópico enviar los datos.
